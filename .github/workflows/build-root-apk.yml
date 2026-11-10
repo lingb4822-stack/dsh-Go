@@ -745,7 +745,7 @@ jobs:
       # setup-toolchain.sh pulls the JDK from the Tsinghua mirror, which answers 403
       # now. actions/setup-java gives the same Temurin 17; the symlink makes the script
       # see it as already installed and skip its own download.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -773,6 +773,13 @@ jobs:
 
       # Gradle reads runtime/out in the configuration phase, so this comes first.
       - name: Runtime package (arm64-v8a)
+        env:
+          # The committed deb lock pins filenames resolved against the old mirror
+          # (e.g. ca-certificates_20260816ubuntu0.24.04.1, which ports.ubuntu.com no
+          # longer publishes: it has .2 now) -> 404. Re-resolve against the signed
+          # Packages.xz of the mirror actually used; every deb is still checked
+          # against the hash that index lists.
+          UPDATE_DEB_LOCK: 1
         run: |
           source tooling/env.sh
           # build-runtime.sh downloads the Ubuntu base rootfs and apt archives from a
@@ -781,6 +788,11 @@ jobs:
           # apt against the signed InRelease). Specific paths first, then the rest.
           sed -i -e 's#^UBUNTU_MIRROR=.*#UBUNTU_MIRROR="https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release"#' -e 's#^UBUNTU_ARCHIVE_AMD64=.*#UBUNTU_ARCHIVE_AMD64="https://archive.ubuntu.com/ubuntu"#' -e 's#^UBUNTU_ARCHIVE_ARM64=.*#UBUNTU_ARCHIVE_ARM64="https://ports.ubuntu.com/ubuntu-ports"#' runtime/build-runtime.sh
           grep -n '^UBUNTU_' runtime/build-runtime.sh
+          # Termux moved proot 5.1.107.98 -> 5.1.107.102; the old .deb is gone from both
+          # the index and the pool, so the pinned version would 404. The new deb keeps
+          # the same two payload paths and is the one the index lists.
+          sed -i -e 's#^PROOT_VERSION=".*"#PROOT_VERSION="5.1.107.102"#' -e 's#\[proot_5\.1\.107\.98_aarch64\.deb\]=.*#[proot_5.1.107.102_aarch64.deb]=10a394b585c2fc2b2c8502544f4e5f1be581dc8bfff79e8ba62f16207423e030#' -e 's#\[proot-v5\.1\.107\.98\.zip\]=.*#[proot-v5.1.107.102.zip]=30d12a6e2cc4147123756ff58edea262d3083bbc238c12d0ab9b39e3d1c40852#' runtime/build-runtime.sh
+          grep -n 'proot' runtime/build-runtime.sh | head -6
           bash runtime/build-runtime.sh arm64-v8a
 
       - name: Analyze and Kotlin unit tests
