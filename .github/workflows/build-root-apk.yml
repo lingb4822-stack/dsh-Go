@@ -736,9 +736,9 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             ~/.android
-          key: toolchain-${ runner.os }-${ hashFiles('tooling/setup-toolchain.sh', 'runtime/patches/pins.json') }
+          key: toolchain-${{ runner.os }}-${{ hashFiles('tooling/setup-toolchain.sh') }}
           restore-keys: |
-            toolchain-${ runner.os }-
+            toolchain-${{ runner.os }}-
 
       - name: Toolchain (JDK 17, Flutter, Android SDK/NDK)
         run: bash tooling/setup-toolchain.sh
