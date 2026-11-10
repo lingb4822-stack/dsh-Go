@@ -798,8 +798,13 @@ jobs:
       - name: Analyze and Kotlin unit tests
         run: |
           source tooling/env.sh
+          # tooling/env.sh points pub at the cn mirror, but app/pubspec.lock pins every
+          # package to pub.dev. A mismatched host makes pub try to "update" the whole
+          # lockfile and crash (Failed to update packages / exit 75). The repo's own CI
+          # likewise leaves the app job on pub.dev.
+          export PUB_HOSTED_URL="https://pub.dev"
           cd app
-          flutter pub get
+          flutter pub get --enforce-lockfile
           flutter analyze
           # gradlew is not in git, and both `gradle wrapper` and `flutter build` need
           # android/local.properties first (repo CI writes it the same way).
@@ -813,6 +818,8 @@ jobs:
       - name: APK (arm64, side-by-side .dev)
         run: |
           source tooling/env.sh
+          # Same reason as the step above: flutter build runs pub again.
+          export PUB_HOSTED_URL="https://pub.dev"
           name=$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' app/pubspec.yaml)
           code=$(python3 tooling/build_number.py)
           echo "Building $name ($code) as applicationId .dev"
