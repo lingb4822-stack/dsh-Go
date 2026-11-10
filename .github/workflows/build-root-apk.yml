@@ -24,6 +24,8 @@ jobs:
       # image and save the 2 GB download.
       SYSTEM_IMAGE: cmake;3.22.1
       DSH_BETA_TOKEN_FILE: ''
+      # The repo's Aliyun Maven mirrors are slow or broken from a US runner.
+      DSH_MAVEN_MIRRORS: 0
       # Side-by-side install next to the official 1.x app (different applicationId).
       DSH_APP_ID_SUFFIX: .dev
       DSH_TEST_FONT_DIR: /usr/share/fonts/opentype/noto
@@ -740,14 +742,26 @@ jobs:
           restore-keys: |
             toolchain-${{ runner.os }}-
 
-      - name: Toolchain (JDK 17, Flutter, Android SDK/NDK)
-        run: bash tooling/setup-toolchain.sh
+      # setup-toolchain.sh pulls the JDK from the Tsinghua mirror, which answers 403
+      # now. actions/setup-java gives the same Temurin 17; the symlink makes the script
+      # see it as already installed and skip its own download.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
-      - name: Fonts for widget tests
+      - name: Toolchain (Flutter, Android SDK/NDK)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends fonts-noto-cjk fonts-noto-cjk-extra
-          ls /usr/share/fonts/opentype/noto/NotoSansCJK-*.ttc
+          mkdir -p "$HOME/dev"
+          ln -sfn "$JAVA_HOME" "$HOME/dev/jdk-17"
+          test -x "$HOME/dev/jdk-17/bin/java"
+          bash tooling/setup-toolchain.sh
+
+      # gradlew is not committed in this repo, so Gradle comes from here (repo CI does
+      # the same); the wrapper is generated below so `flutter build apk` finds it.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
 
       # Generates lib/l10n/app_*.arb + lib/l10n/gen and the guide skill assets:
       # `flutter analyze` below needs both, and neither is hand-editable.
@@ -761,6 +775,12 @@ jobs:
       - name: Runtime package (arm64-v8a)
         run: |
           source tooling/env.sh
+          # build-runtime.sh downloads the Ubuntu base rootfs and apt archives from a
+          # Tsinghua mirror that answers 403 now. Point those three at the official
+          # mirrors (same bytes: every file is checked against its pinned sha256, and
+          # apt against the signed InRelease). Specific paths first, then the rest.
+          sed -i -e 's#^UBUNTU_MIRROR=.*#UBUNTU_MIRROR="https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release"#' -e 's#^UBUNTU_ARCHIVE_AMD64=.*#UBUNTU_ARCHIVE_AMD64="https://archive.ubuntu.com/ubuntu"#' -e 's#^UBUNTU_ARCHIVE_ARM64=.*#UBUNTU_ARCHIVE_ARM64="https://ports.ubuntu.com/ubuntu-ports"#' runtime/build-runtime.sh
+          grep -n '^UBUNTU_' runtime/build-runtime.sh
           bash runtime/build-runtime.sh arm64-v8a
 
       - name: Analyze and Kotlin unit tests
@@ -769,8 +789,14 @@ jobs:
           cd app
           flutter pub get
           flutter analyze
+          # gradlew is not in git, and both `gradle wrapper` and `flutter build` need
+          # android/local.properties first (repo CI writes it the same way).
+          printf 'sdk.dir=%s\nflutter.sdk=%s\n' "$ANDROID_HOME" "$HOME/dev/flutter" > android/local.properties
+          (cd android && gradle wrapper --gradle-version 9.3.1 --distribution-type bin && test -x gradlew)
           flutter build apk --config-only --flavor arm64 --target-platform android-arm64
-          cd android && ./gradlew :app:test
+          # Only the arm64 flavor is configured above; the unflavored test task would
+          # pull in x64, whose runtime bundle this job does not build.
+          cd android && gradle --stacktrace :app:testArm64DebugUnitTest
 
       - name: APK (arm64, side-by-side .dev)
         run: |
